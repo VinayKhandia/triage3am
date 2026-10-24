@@ -1,162 +1,152 @@
-# Triage3AM v2.0: Autonomous Outage Intelligence Engine
+# triage3am
 
-> **Ultra-fast, zero-dependency incident triage backend with streaming log ingestion, Trie-indexed Drain clustering, multipart file uploads, and temporal cascade analysis.**
+A dependency-free incident triage tool. It reads raw log files, groups similar lines into templates using a Drain-inspired clustering method, and reports the earliest likely trigger, the order in which services failed, and suggested next steps. It uses only the Python standard library and makes no calls to external services or language models.
 
----
+## Quick start
 
-## What's New in v2.0
+Requires Python 3 (standard library only; no `pip install` step).
 
-### 1. High-Concurrency Backend Architecture
-- **Threaded Concurrency (`ThreadedHTTPServer`)**: Heavy log ingestion and clustering operations no longer block health checks, metrics, or concurrent users.
-- **Payload Safety Limits**: Rejects requests exceeding 100MB immediately (`HTTP 413 Payload Too Large`) before reading bytes into RAM, guarding against out-of-memory DoS.
-- **Transparent Gzip Compression**: Automatically compresses JSON responses exceeding 1KB when the client supports `Accept-Encoding: gzip`, reducing telemetry transfer payloads by 80–90%.
-- **Robust Path Traversal Shield**: `SafePathManager` strictly validates and prevents directory traversal attacks (`../`, `%2f`, null bytes).
-
-### 2. File & Stream Processing Engine (`file_handler.py`)
-- **Zero-Dependency Streaming Parser**: `StreamingLogReader` processes logs as lazy iterators ($O(1)$ memory usage during ingestion) rather than loading entire multi-gigabyte log strings into memory.
-- **On-the-Fly Gzip Decompression**: Automatically detects gzip magic bytes (`0x1f`, `0x8b`) and streams lines on-the-fly without extracting `.gz` archives to disk.
-- **Pure-Python Multipart Form-Data Parser**: Direct file uploads (`POST /api/v2/analyze/upload` and `POST /api/upload`) supporting `.log`, `.txt`, `.json`, and compressed `.gz` files without any external libraries.
-- **Dynamic Dataset Discovery**: Auto-detects all files in `datasets/`, extracting titles, line counts, byte sizes, and affected services dynamically.
-- **Multi-Format Incident Post-Mortem Exporter**: Generates formatted incident reports in **Slack Markdown**, **GitHub/Jira Post-Mortem Markdown**, **CSV Summary Tables**, and **Structured JSON**.
-
-### 3. Triage Engine v2 Enhancements (`triage_engine.py`)
-- **Trie / First-Token Indexed Drain Clustering**: Accelerated template grouping reduces comparison overhead by 95% on 10,000+ line datasets.
-- **Temporal Cascade Graph**: Computes service failure propagation delays ($T_0 \to T_1 \to T_2$) and visualizes the cascading dependency failure chain.
-- **Timeline Sparkline Bucketing**: Bins log severity frequencies into time windows for anomaly histograms.
-- **11+ Deterministic Diagnostic Runbooks**:
-  1. Database Connection Pool & Lock Starvation
-  2. JVM / Container OOM Eviction & CrashLoopBackOff
-  3. Redis / Cache Eviction Storm & Thundering Herd
-  4. Payment Gateway & Remote RPC Timeout Storm
-  5. Upstream Microservice Unresponsiveness / Gateway Timeout (504/502)
-  6. Message Queue / Kafka Consumer Lag & Rebalance Storm
-  7. Disk Volume Exhaustion (ENOSPC / Read-only Filesystem)
-  8. TLS / SSL Certificate Expiration
-  9. Rate Limiting / 429 Quota Exhaustion
-  10. Thread Starvation & Deadlock
-  11. DNS Resolution Failure & CoreDNS Saturation
-
----
-
-## REST API Reference
-
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/v2/health` | Service health, version, uptime, and engine capabilities |
-| `GET` | `/api/v2/metrics` | Active threads, runtime counters, and memory status |
-| `GET` | `/api/v2/presets` | Dynamic list of available preset scenarios with line counts and sizes |
-| `GET` | `/api/load-preset?name=...&limit=...&offset=...` | Safely streams preset log content with optional pagination |
-| `GET` | `/api/v2/download?file=...` | Streams an individual telemetry file as an attachment download |
-| `GET` | `/api/v2/download/bundle` | Packages and downloads all datasets as a `.zip` archive |
-| `POST` | `/api/v2/analyze` | Ingests and triages raw text or JSON log payload |
-| `POST` | `/api/v2/analyze/upload` | Multipart file upload for `.log`, `.txt`, and `.gz` archives |
-| `POST` | `/api/v2/export` | Formats triage report into `slack`, `markdown`, `csv`, or `json` |
-| `POST` | `/api/v2/export/download` | Generates report and returns directly as a downloadable file |
-| `POST` | `/api/export-slack` | Backward-compatible v1 Slack alert markdown endpoint |
-| `GET` | `/` | Cyber-SRE dark mode web dashboard (`static/index.html`) |
-
-
-
-## How I Approached the Problem:
-
-Focused on "Patient Zero", Not Symptoms: In a 10,000-line outage cascade, 99% of logs are downstream symptoms (timeouts, retries, 504 errors). Rather than counting which error appeared most frequently, the architecture was designed to find the chronological catalyst—the very first anomalous failure before cascading retries obscured it.
-
-Rule-Free, Drain-Inspired Template Clustering: Hand-written regex rules break whenever log formats change. Instead, I built an algorithm that dynamically abstracts variable tokens (UUIDs, IP addresses, memory addresses, timestamps, numeric IDs) to group structurally identical log lines into clean templates without static rules.
-
-Multi-Factor Priority Scoring: Prioritized incidents through a multi-factor impact score factoring in chronological seniority, burst frequency, cross-service blast radius, and stack trace severity—preventing high-volume retry loops from overshadowing root causes.
-
-Zero-Dependency Core: Built the entire engine using pure Python standard library to ensure instant execution, zero pip installation friction, and seamless portability across local CLI, Docker, and serverless environments.
-
-
-## Features Implemented
-Sub-Second Log Ingestion & 99.9% Noise Reduction: Ingests and processes 10,000 raw log lines in 0.18 seconds, collapsing them into 3 distinct, prioritized incident cards.
-
-"Patient Zero" Isolation & Cascade Waterfall: Pinpoints the exact timestamp, line number, service, and trigger event that started the incident, displayed alongside a chronological multi-service cascade timeline.
-Temporal Error Rate Spike Detection (10-Second Buckets): Sliding temporal histogram that flags baseline vs. peak error volume and highlights the exact second the outage spiked.
-Service Blast Radius Topology Graph: Directed dependency graph that visually separates CRITICAL root services from downstream DEGRADED services with error volume flows.
-
-Actionable Remediation Commands: Recommends concrete operational fix commands (e.g., kubectl rollout undo, kubectl scale, pool expansion commands) directly in the UI for immediate triage.
-1-Click PIR & Slack Incident Exports: Generates Google SRE-style Markdown Post-Incident Reviews (PIR) and formatted PagerDuty/Slack incident room briefs with a single click.
-
-3 Enterprise Outage Scenarios: Built-in 10,000-line test datasets simulating Database Pool Starvation, Kubernetes OOM CrashLoopBackOff, and Redis Thundering Herd cache failover.
-
-Resilient Dual-Mode Architecture: Powered by a serverless Python backend with an automatic in-browser client-side triage fallback, ensuring the UI works offline and under network constraints.
-
-## Trade-offs I Made:
-
-Deterministic Algorithmic Clustering vs. Large Language Models (LLMs):
-
-Trade-off: Opted for a Drain-inspired heuristic parser over sending logs to external LLM APIs (OpenAI/Anthropic).
-Rationale: LLMs querying 10,000 log lines take 10–30+ seconds, introduce token limits, incur API costs, and risk hallucinations. Algorithmic clustering finishes in 0.18 seconds locally with 100% deterministic accuracy.
-
-Heuristic Cascade Inference vs. Requiring Distributed Tracing (OpenTelemetry):
-Trade-off: Reconstructed the service cascade and blast radius using chronological event correlation instead of requiring distributed tracing IDs (like Jaeger/Zipkin spans).
-Rationale: In real-world outages, distributed tracing is often missing, misconfigured, or dropped during high load. Relying solely on raw log lines ensures the tool works out-of-the-box on any plain text dump.
-
-10-Second Discrete Time Bucketing vs. Microsecond Sliding Windows:
-Trade-off: Used 10-second discrete buckets for error histogramming rather than microsecond-level continuous binning.
-Rationale: At 3 a.m., an on-call engineer needs immediate, human-readable temporal context. 10-second intervals balance anomaly detection precision with fast visual clarity.
-
-Optimized Variable Masking vs. Full AST Grammar Parsing:
-Trade-off: Used optimized single-pass variable replacement rather than building a heavy language AST compiler.
-Rationale: Provides sub-millisecond per-line parsing speed across heterogeneous log formats (Syslog, Spring Boot, JSON, Kubernetes) while maintaining sub-200ms total triage time.
----
-
-## Quick Start
-
-### 1. Run the v2 Server
 ```bash
 python3 server.py
-# Server starts at http://localhost:8000
+# Dashboard and API at http://localhost:8000
 ```
 
-### 2. Run the Test Suite
-```bash
-python3 -m unittest discover -s tests -p "test_*.py"
-```
+Analyze a log file from the command line:
 
-### 3. Generate 10k Line Test Datasets
-```bash
-python3 generate_datasets.py
-```
-
-### 4. Direct cURL Examples
-
-#### Analyze Raw Logs:
-```bash
-curl -X POST http://localhost:8000/api/v2/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"logs": "2026-10-10T03:02:11Z [postgres-cluster] FATAL remaining connection slots are reserved (max_connections=100)\n2026-10-10T03:02:12Z [order-service] ERROR HikariPool-1 - Connection is not available"}'
-```
-
-#### Upload a Log File:
 ```bash
 curl -X POST http://localhost:8000/api/v2/analyze/upload \
   -F "file=@datasets/ecommerce_cascade_10k.log" \
   -F "threshold=0.55"
 ```
 
-#### Export to Incident Post-Mortem Markdown:
+Run the tests and regenerate the bundled datasets:
+
+```bash
+python3 -m unittest discover -s tests -p "test_*.py"
+python3 generate_datasets.py
+```
+
+## Example output
+
+<img width="1470" height="956" alt="Screenshot 2026-10-24 at 10 33 49 AM" src="https://github.com/user-attachments/assets/6c80ea48-5910-4a3f-bed9-300f27982d5e" />
+
+
+
+## What it does
+
+- **Template clustering.** Variable tokens (UUIDs, IP addresses, memory addresses, timestamps, numeric IDs) are masked so structurally identical lines collapse into one template. This needs no per-format parsing rules. A 10,000-line outage typically reduces to a handful of ranked incident cards.
+- **Likely trigger ("patient zero").** In a large outage most lines are downstream symptoms such as timeouts, retries, and 504s. Instead of ranking by frequency, the tool looks for the earliest anomalous failure and reports its timestamp, line number, service, and event.
+- **Priority scoring.** Incidents are ranked by a multi-factor score: how early the failure appeared, burst frequency, cross-service blast radius, and stack trace severity. This keeps high-volume retry loops from outranking the root cause.
+- **Cascade timeline.** Service failure order and propagation delays (`T0 -> T1 -> T2`) are reconstructed from event timing, then shown as a chain and a dependency graph separating root services from downstream degraded ones.
+- **Error-rate spikes.** Severity counts are binned into 10-second buckets to show baseline versus peak and the second the spike began.
+- **Diagnostic runbooks.** A set of deterministic, rule-based runbooks (see below) maps recognized patterns to concrete suggested commands such as `kubectl rollout undo` or `kubectl scale`.
+- **Exports.** Reports can be exported as Slack Markdown, GitHub/Jira post-mortem Markdown, a CSV summary, or structured JSON.
+- **Offline fallback.** If the backend is unreachable, the web UI falls back to an in-browser triage implementation.
+
+### Built-in runbooks
+
+1. Database connection pool and lock starvation
+2. JVM / container OOM eviction and CrashLoopBackOff
+3. Redis / cache eviction storm and thundering herd
+4. Payment gateway and remote RPC timeout storm
+5. Upstream microservice unresponsiveness (502/504)
+6. Message queue / Kafka consumer lag and rebalance storm
+7. Disk volume exhaustion (ENOSPC / read-only filesystem)
+8. TLS / SSL certificate expiration
+9. Rate limiting / 429 quota exhaustion
+10. Thread starvation and deadlock
+11. DNS resolution failure and CoreDNS saturation
+
+## Backend and ingestion
+
+- **Threaded server.** Long-running ingestion does not block health checks, metrics, or other users.
+- **Streaming parser.** Logs are read as lazy iterators, so memory use during ingestion does not grow with file size. Gzip input is detected by its magic bytes (`0x1f 0x8b`) and decompressed on the fly without extracting to disk.
+- **Multipart uploads.** A pure-Python parser accepts `.log`, `.txt`, `.json`, and `.gz` files.
+- **Payload limit.** Requests larger than 100 MB are rejected with HTTP 413 before the body is read.
+- **Response compression.** JSON responses over 1 KB are gzip-compressed when the client sends `Accept-Encoding: gzip`.
+- **Path validation.** `SafePathManager` rejects directory traversal attempts (`../`, `%2f`, null bytes) on file endpoints.
+- **Dataset discovery.** Files in `datasets/` are listed automatically with title, line count, size, and affected services.
+
+## REST API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v2/health` | Service health, version, uptime, and capabilities |
+| GET | `/api/v2/metrics` | Active threads, runtime counters, and memory status |
+| GET | `/api/v2/presets` | Available preset scenarios with line counts and sizes |
+| GET | `/api/load-preset?name=...&limit=...&offset=...` | Stream preset log content with optional pagination |
+| GET | `/api/v2/download?file=...` | Download a single dataset file |
+| GET | `/api/v2/download/bundle` | Download all datasets as a `.zip` |
+| POST | `/api/v2/analyze` | Triage a raw text or JSON log payload |
+| POST | `/api/v2/analyze/upload` | Triage an uploaded `.log`, `.txt`, `.json`, or `.gz` file |
+| POST | `/api/v2/export` | Format a triage report as `slack`, `markdown`, `csv`, or `json` |
+| POST | `/api/v2/export/download` | Generate a report and return it as a file download |
+| POST | `/api/export-slack` | Backward-compatible v1 Slack export |
+| GET | `/` | Web dashboard (`static/index.html`) |
+
+### Examples
+
+Analyze raw logs:
+
+```bash
+curl -X POST http://localhost:8000/api/v2/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"logs": "2026-10-10T03:02:11Z [postgres-cluster] FATAL remaining connection slots are reserved (max_connections=100)\n2026-10-10T03:02:12Z [order-service] ERROR HikariPool-1 - Connection is not available"}'
+```
+
+Export a report as post-mortem Markdown:
+
 ```bash
 curl -X POST http://localhost:8000/api/v2/export \
   -H "Content-Type: application/json" \
   -d '{"format": "markdown", "report": { ... }}'
 ```
 
-#### Download a Specific Log Dataset File:
-```bash
-curl -O -J http://localhost:8000/api/v2/download?file=ecommerce_cascade_10k.log
-```
+Download a dataset file, or all datasets as a ZIP:
 
-#### Download All Log Datasets as a Compressed ZIP Bundle:
 ```bash
+curl -O -J "http://localhost:8000/api/v2/download?file=ecommerce_cascade_10k.log"
 curl -O -J http://localhost:8000/api/v2/download/bundle
 ```
 
-#### Download Incident Report as a File:
+Download a report as a file:
+
 ```bash
 curl -X POST http://localhost:8000/api/v2/export/download \
   -H "Content-Type: application/json" \
   -d '{"format": "markdown", "filename": "postmortem.md", "report": { ... }}' \
   -o postmortem.md
 ```
+
+## Benchmarks
+
+Triage of a 10,000-line bundled dataset completes in roughly 0.18 s on the author's machine.
+
+<!-- TODO before publishing: fill in the details below and confirm the figure.
+Machine / CPU:
+Python version:
+Dataset:
+Method: median of N runs, command used:
+Reproduce with: <command>
+Only keep any other performance claims (noise reduction, comparison
+overhead from the Trie index, response compression ratio) if you
+measure them and list the method here. -->
+
+## Design decisions and trade-offs
+
+**Deterministic clustering instead of an LLM.** Logs are not sent to an external model. An LLM call over 10,000 lines would add seconds of latency, token limits, API cost, and the risk of invented output. The heuristic approach runs locally and gives the same output for the same input. It will not understand a log line the way a model might, which is an accepted cost.
+
+**Timing-based cascade inference instead of distributed tracing.** The cascade is reconstructed from event order and timing rather than trace IDs, because tracing is often missing or incomplete during real incidents and this works on a plain text dump. The trade-off is that clock skew or missing lines can produce a wrong order, so treat it as a lead to check, not a verdict.
+
+**10-second buckets instead of finer windows.** Coarser buckets keep the spike view readable under pressure, at the cost of temporal precision.
+
+**Single-pass variable masking instead of full grammar parsing.** Masking keeps per-line cost low across mixed formats (Syslog, Spring Boot, JSON, Kubernetes) without a heavy parser. Unusual formats may cluster less cleanly.
+
+**Standard library only.** No installation friction and easy portability to a local CLI, Docker, or serverless environment.
+
+## Limitations
+
+- The bundled datasets (database pool starvation, Kubernetes OOM CrashLoopBackOff, Redis thundering herd) are synthetic and generated by `generate_datasets.py`. Behavior on real production logs has been tested less.
+- "Likely trigger" is a timing heuristic. It can be wrong with clock skew, dropped lines, or incidents with several independent causes.
+- Runbook recommendations are pattern-based suggestions. Review commands before running them against a real system.
+- The server has no authentication or TLS. It is intended for local or trusted-network use only.
